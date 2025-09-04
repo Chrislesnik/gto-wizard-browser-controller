@@ -32,6 +32,11 @@ class GetRangeRequest(BaseModel):
     cash_players: Optional[str] = None  # Can be: "Heads-up", "6max", "8max", "9max" or None
     available_spots: Optional[str] = None  # Can be: "postflop_included", "preflop_only" or None
     cash_stacks: Optional[str] = None  # Can be: "Any", "200", "150", "100", "75", "50", "40", "20" or None
+    bet_sizes: Optional[str] = None  # Can be: "Any", "Simple", "Simplified", "General" or None
+    rake: Optional[str] = None  # Can be: "Any", "NL50", "NL500", "NL50 GG", "NL1k GG" or None
+    cash_open_size: Optional[str] = None  # Can be: "Any", "GTO", "2.5x" or None
+    cash_3bet_size: Optional[str] = None  # Can be: "Any", "GTO", "Smaller" or None
+    hero: Optional[str] = None  # Can be: "Any", "OOP", "IP" or None
 
 class GetRangeResponse(BaseModel):
     session_id: str
@@ -101,7 +106,18 @@ async def get_range_action(request: GetRangeRequest):
     try:
         page = session_info["page"]
         
-        # Wait for the specific div to be present and clickable
+        # Wait for the page to be fully loaded
+        logger.info(f"Waiting for GTO Wizard page to load in session {session_id}")
+        
+        # Wait for the page to be ready - look for any GTO Wizard specific elements
+        try:
+            # Wait for any GTO Wizard button to be present (this indicates the page is loaded)
+            await page.wait_for_selector("div.gw_btn", state="visible", timeout=10000)
+            logger.info("GTO Wizard page loaded successfully")
+        except Exception as e:
+            logger.warning(f"Could not find GTO Wizard buttons, but continuing: {str(e)}")
+        
+        # Try to find and click the range selector div, but don't fail if we can't find it
         logger.info(f"Looking for GTO Wizard range selector div in session {session_id}")
         
         # Try multiple selectors to find the range selector div
@@ -116,7 +132,7 @@ async def get_range_action(request: GetRangeRequest):
         for selector in selectors:
             try:
                 # Wait for the element to be visible and clickable
-                element = await page.wait_for_selector(selector, state="visible", timeout=5000)
+                element = await page.wait_for_selector(selector, state="visible", timeout=3000)
                 if element:
                     # Click on the div
                     await element.click()
@@ -128,7 +144,7 @@ async def get_range_action(request: GetRangeRequest):
                 continue
         
         if not element_found:
-            raise Exception("Could not find or click on any range selector div")
+            logger.warning("Could not find or click on any range selector div, but continuing with other actions")
         
         # Only perform the solutions click if the solutions parameter is provided and not empty
         if request.solutions and request.solutions.strip():
@@ -419,6 +435,388 @@ async def get_range_action(request: GetRangeRequest):
             if not cash_stacks_clicked:
                 raise Exception(f"Could not click on cash_stacks button for {request.cash_stacks}")
         
+        # Handle bet_sizes clicking if provided
+        if request.bet_sizes and request.bet_sizes.strip():
+            logger.info(f"Now clicking on bet_sizes button for: {request.bet_sizes}")
+            
+            # Map bet_sizes to their corresponding data-tst attributes
+            bet_sizes_map = {
+                "Any": "chrow_any",
+                "Simple": "chrow_simple",
+                "Simplified": "chrow_simplified", 
+                "General": "chrow_general"
+            }
+            
+            if request.bet_sizes not in bet_sizes_map:
+                raise Exception(f"Invalid bet_sizes value: {request.bet_sizes}. Must be one of: Any, Simple, Simplified, General")
+            
+            data_tst_value = bet_sizes_map[request.bet_sizes]
+            
+            # Try multiple selectors for the bet_sizes button
+            bet_sizes_selectors = [
+                f"div[data-tst='{data_tst_value}']",
+                f"div[data-tst='{data_tst_value}'] span",
+                f"div:has-text('{request.bet_sizes}')",
+                f"text={request.bet_sizes}",
+                f"div.gw_btn.gw_btn_text.gw_loading_text.cherow_row_checkbox.cherow_row_checkbox_item:has-text('{request.bet_sizes}')"
+            ]
+            
+            bet_sizes_clicked = False
+            for selector in bet_sizes_selectors:
+                try:
+                    logger.info(f"Trying bet_sizes selector: {selector}")
+                    element = await page.wait_for_selector(selector, state="visible", timeout=5000)
+                    if element:
+                        await element.click()
+                        logger.info(f"Successfully clicked on bet_sizes button for {request.bet_sizes}")
+                        
+                        # Wait a moment for the click to register
+                        await page.wait_for_timeout(1000)
+                        
+                        # Verify that the button is now active
+                        active_selector = f"div[data-tst='{data_tst_value}'].gw_btn_active"
+                        try:
+                            await page.wait_for_selector(active_selector, state="visible", timeout=3000)
+                            logger.info(f"Verified that {request.bet_sizes} button is now active")
+                        except:
+                            logger.warning(f"Could not verify that {request.bet_sizes} button is active, but click was successful")
+                        
+                        bet_sizes_clicked = True
+                        break
+                except Exception as e:
+                    logger.info(f"Bet_sizes selector {selector} failed: {str(e)}")
+                    continue
+            
+            if not bet_sizes_clicked:
+                raise Exception(f"Could not click on bet_sizes button for {request.bet_sizes}")
+        
+        # Handle rake clicking if provided
+        if request.rake and request.rake.strip():
+            logger.info(f"Now clicking on rake button for: {request.rake}")
+            
+            # Map rake to their corresponding data-tst attributes
+            rake_map = {
+                "Any": "chrow_any",
+                "NL50": "chrow_NL50",
+                "NL500": "chrow_NL500", 
+                "NL50 GG": "chrow_GG NL50",
+                "NL1k GG": "chrow_GG NL1k"
+            }
+            
+            if request.rake not in rake_map:
+                raise Exception(f"Invalid rake value: {request.rake}. Must be one of: Any, NL50, NL500, NL50 GG, NL1k GG")
+            
+            data_tst_value = rake_map[request.rake]
+            
+            # Try multiple selectors for the rake button
+            rake_selectors = [
+                f"div[data-tst='{data_tst_value}']",
+                f"div[data-tst='{data_tst_value}'] span",
+                f"div:has-text('{request.rake}')",
+                f"text={request.rake}",
+                f"div.gw_btn.gw_btn_text.gw_loading_text.cherow_row_checkbox.cherow_row_checkbox_item:has-text('{request.rake}')"
+            ]
+            
+            rake_clicked = False
+            for selector in rake_selectors:
+                try:
+                    logger.info(f"Trying rake selector: {selector}")
+                    element = await page.wait_for_selector(selector, state="visible", timeout=5000)
+                    if element:
+                        await element.click()
+                        logger.info(f"Successfully clicked on rake button for {request.rake}")
+                        
+                        # Wait a moment for the click to register
+                        await page.wait_for_timeout(1000)
+                        
+                        # Verify that the button is now active
+                        active_selector = f"div[data-tst='{data_tst_value}'].gw_btn_active"
+                        try:
+                            await page.wait_for_selector(active_selector, state="visible", timeout=3000)
+                            logger.info(f"Verified that {request.rake} button is now active")
+                        except:
+                            logger.warning(f"Could not verify that {request.rake} button is active, but click was successful")
+                        
+                        rake_clicked = True
+                        break
+                except Exception as e:
+                    logger.info(f"Rake selector {selector} failed: {str(e)}")
+                    continue
+            
+            if not rake_clicked:
+                raise Exception(f"Could not click on rake button for {request.rake}")
+        
+        # Handle cash_open_size clicking if provided
+        if request.cash_open_size and request.cash_open_size.strip():
+            logger.info(f"Now clicking on cash_open_size button for: {request.cash_open_size}")
+            
+            # Map cash_open_size to their corresponding data-tst attributes
+            # Note: "Any" might conflict with other sections, so we'll rely more on text selectors
+            cash_open_size_map = {
+                "Any": "chrow_any",  # This might conflict, but we have fallback selectors
+                "GTO": "chrow_gto",
+                "2.5x": "chrow_25x"
+            }
+            
+            if request.cash_open_size not in cash_open_size_map:
+                raise Exception(f"Invalid cash_open_size value: {request.cash_open_size}. Must be one of: Any, GTO, 2.5x")
+            
+            data_tst_value = cash_open_size_map[request.cash_open_size]
+            
+            # Try multiple selectors for the cash_open_size button
+            # For "Any", we need to be more specific since it appears in multiple sections
+            if request.cash_open_size == "Any":
+                cash_open_size_selectors = [
+                    # Try to find "Any" button specifically in the opening size section
+                    f"div:has-text('Opening'):has-text('Any')",
+                    f"div:has-text('{request.cash_open_size}'):near(div:has-text('Opening'))",
+                    f"div[data-tst='{data_tst_value}']",
+                    f"div[data-tst='{data_tst_value}'] span",
+                    f"div:has-text('{request.cash_open_size}')",
+                    f"text={request.cash_open_size}",
+                    f"div.gw_btn.gw_btn_text.gw_loading_text.cherow_row_checkbox.cherow_row_checkbox_item:has-text('{request.cash_open_size}')"
+                ]
+            else:
+                cash_open_size_selectors = [
+                    f"div[data-tst='{data_tst_value}']",
+                    f"div[data-tst='{data_tst_value}'] span",
+                    f"div:has-text('{request.cash_open_size}')",
+                    f"text={request.cash_open_size}",
+                    f"div.gw_btn.gw_btn_text.gw_loading_text.cherow_row_checkbox.cherow_row_checkbox_item:has-text('{request.cash_open_size}')"
+                ]
+            
+            cash_open_size_clicked = False
+            for selector in cash_open_size_selectors:
+                try:
+                    logger.info(f"Trying cash_open_size selector: {selector}")
+                    element = await page.wait_for_selector(selector, state="visible", timeout=5000)
+                    if element:
+                        await element.click()
+                        logger.info(f"Successfully clicked on cash_open_size button for {request.cash_open_size}")
+                        
+                        # Wait a moment for the click to register
+                        await page.wait_for_timeout(1000)
+                        
+                        # Verify that the button is now active
+                        active_selector = f"div[data-tst='{data_tst_value}'].gw_btn_active"
+                        try:
+                            await page.wait_for_selector(active_selector, state="visible", timeout=3000)
+                            logger.info(f"Verified that {request.cash_open_size} button is now active")
+                        except:
+                            logger.warning(f"Could not verify that {request.cash_open_size} button is active, but click was successful")
+                        
+                        cash_open_size_clicked = True
+                        break
+                except Exception as e:
+                    logger.info(f"Cash_open_size selector {selector} failed: {str(e)}")
+                    continue
+            
+            if not cash_open_size_clicked:
+                raise Exception(f"Could not click on cash_open_size button for {request.cash_open_size}")
+        
+        # Handle cash_3bet_size clicking if provided
+        if request.cash_3bet_size and request.cash_3bet_size.strip():
+            logger.info(f"Now clicking on cash_3bet_size button for: {request.cash_3bet_size}")
+            
+            # Map cash_3bet_size to their corresponding data-tst attributes
+            # Note: These might conflict with other sections, so we'll use more specific selectors
+            cash_3bet_size_map = {
+                "Any": "chrow_any",
+                "GTO": "chrow_gto", 
+                "Smaller": "chrow_smaller"
+            }
+            
+            if request.cash_3bet_size not in cash_3bet_size_map:
+                raise Exception(f"Invalid cash_3bet_size value: {request.cash_3bet_size}. Must be one of: Any, GTO, Smaller")
+            
+            data_tst_value = cash_3bet_size_map[request.cash_3bet_size]
+            
+            # Try multiple selectors for the cash_3bet_size button
+            # We need to be very specific to target the 3bet size section, not other sections
+            # Use "Smaller" as a reference point since it's unique to the 3bet section
+            if request.cash_3bet_size == "Any":
+                cash_3bet_size_selectors = [
+                    # The "Any" button in 3bet section has NO data-tst attribute
+                    # We need to find the "Any" button that is specifically in the 3bet section
+                    # Look for the "Any" button that comes before the "GTO" button that comes before the "Smaller" button
+                    f"div.gw_btn.gw_btn_text.gw_loading_text.cherow_row_checkbox.cherow_row_checkbox_item:has-text('Any'):near(div[data-tst='chrow_smaller']):not(:has([data-tst]))",
+                    # Try to find "Any" button that is the first button in a row that contains "Smaller"
+                    f"div:has-text('Any'):near(div:has-text('Smaller')):not([data-tst])",
+                    # Look for "Any" button that is near both "GTO" and "Smaller" buttons
+                    f"div:has-text('Any'):near(div:has-text('GTO')):near(div:has-text('Smaller'))",
+                    # Fallback selectors
+                    f"div:has-text('Any'):near(div[data-tst='chrow_smaller'])",
+                    f"div:has-text('{request.cash_3bet_size}')",
+                    f"text={request.cash_3bet_size}",
+                    f"div.gw_btn.gw_btn_text.gw_loading_text.cherow_row_checkbox.cherow_row_checkbox_item:has-text('{request.cash_3bet_size}')"
+                ]
+            elif request.cash_3bet_size == "GTO":
+                cash_3bet_size_selectors = [
+                    # The "GTO" button in 3bet section has data-tst="chrow_gto" but conflicts with opening size section
+                    # We need to find the "GTO" button that is specifically in the 3bet section
+                    # Use a very specific selector that targets the GTO button in the 3bet section by looking for the unique combination
+                    # Find GTO button that is near Smaller (unique to 3bet section) but NOT near 2.5x (unique to opening section)
+                    f"div[data-tst='chrow_gto']:near(div[data-tst='chrow_smaller']):not(:near(div:has-text('2.5x')))",
+                    # Try to find GTO button that is near Smaller but not near Opening
+                    f"div[data-tst='chrow_gto']:near(div[data-tst='chrow_smaller']):not(:near(div:has-text('Opening')))",
+                    # Look for GTO button that is near both Any (no data-tst) and Smaller buttons
+                    f"div[data-tst='chrow_gto']:near(div:has-text('Any'):not([data-tst])):near(div[data-tst='chrow_smaller'])",
+                    # Use CSS sibling selectors to find the GTO button that comes after Any (no data-tst) and before Smaller
+                    f"div:has-text('Any'):not([data-tst]) + div[data-tst='chrow_gto']",
+                    f"div:has-text('Any'):not([data-tst]) ~ div[data-tst='chrow_gto']",
+                    # Look for GTO button that has Smaller as a sibling
+                    f"div[data-tst='chrow_gto']:has(+ div[data-tst='chrow_smaller'])",
+                    f"div[data-tst='chrow_gto']:has(~ div[data-tst='chrow_smaller'])",
+                    # Look for "GTO" button that is near both "Any" and "Smaller" buttons
+                    f"div:has-text('GTO'):near(div:has-text('Any')):near(div:has-text('Smaller'))",
+                    # Fallback selectors
+                    f"div:has-text('{request.cash_3bet_size}'):near(div:has-text('Smaller'))",
+                    f"div:has-text('{request.cash_3bet_size}'):near(div[data-tst='chrow_smaller'])",
+                    f"div[data-tst='{data_tst_value}']",
+                    f"div[data-tst='{data_tst_value}'] span",
+                    f"div:has-text('{request.cash_3bet_size}')",
+                    f"text={request.cash_3bet_size}",
+                    f"div.gw_btn.gw_btn_text.gw_loading_text.cherow_row_checkbox.cherow_row_checkbox_item:has-text('{request.cash_3bet_size}')"
+                ]
+            else:  # Smaller
+                cash_3bet_size_selectors = [
+                    # Try the specific data-tst first (Smaller should be unique)
+                    f"div[data-tst='{data_tst_value}']",
+                    f"div[data-tst='{data_tst_value}'] span",
+                    # Fallback to generic selectors
+                    f"div:has-text('{request.cash_3bet_size}')",
+                    f"text={request.cash_3bet_size}",
+                    f"div.gw_btn.gw_btn_text.gw_loading_text.cherow_row_checkbox.cherow_row_checkbox_item:has-text('{request.cash_3bet_size}')"
+                ]
+            
+            cash_3bet_size_clicked = False
+            for selector in cash_3bet_size_selectors:
+                try:
+                    logger.info(f"Trying cash_3bet_size selector: {selector}")
+                    element = await page.wait_for_selector(selector, state="visible", timeout=5000)
+                    if element:
+                        await element.click()
+                        logger.info(f"Successfully clicked on cash_3bet_size button for {request.cash_3bet_size}")
+                        
+                        # Wait a moment for the click to register
+                        await page.wait_for_timeout(1000)
+                        
+                        # Verify that the button is now active
+                        # Use more specific verification selectors to avoid conflicts
+                        if request.cash_3bet_size == "Any":
+                            # The "Any" button in 3bet section has NO data-tst attribute
+                            active_selector = f"div:has-text('Any'):near(div:has-text('Smaller')):not([data-tst]).gw_btn_active"
+                        elif request.cash_3bet_size == "GTO":
+                            # The "GTO" button in 3bet section has data-tst="chrow_gto" but we need to verify it's the right one
+                            # Verify it's the GTO button that's near the Smaller button and not near 2.5x
+                            active_selector = f"div[data-tst='chrow_gto']:near(div[data-tst='chrow_smaller']):not(:near(div:has-text('2.5x'))).gw_btn_active"
+                        else:  # Smaller
+                            active_selector = f"div[data-tst='{data_tst_value}'].gw_btn_active"
+                        
+                        try:
+                            await page.wait_for_selector(active_selector, state="visible", timeout=3000)
+                            logger.info(f"Verified that {request.cash_3bet_size} button is now active")
+                        except:
+                            logger.warning(f"Could not verify that {request.cash_3bet_size} button is active, but click was successful")
+                        
+                        cash_3bet_size_clicked = True
+                        break
+                except Exception as e:
+                    logger.info(f"Cash_3bet_size selector {selector} failed: {str(e)}")
+                    continue
+            
+            if not cash_3bet_size_clicked:
+                raise Exception(f"Could not click on cash_3bet_size button for {request.cash_3bet_size}")
+        
+        # Handle hero clicking if provided
+        if request.hero and request.hero.strip():
+            logger.info(f"Now clicking on hero button for: {request.hero}")
+            
+            # Map hero to their corresponding data-tst attributes
+            hero_map = {
+                "Any": None,  # "Any" has no data-tst attribute
+                "OOP": "chrow_oop",
+                "IP": "chrow_ip"
+            }
+            
+            if request.hero not in hero_map:
+                raise Exception(f"Invalid hero value: {request.hero}. Must be one of: Any, OOP, IP")
+            
+            data_tst_value = hero_map[request.hero]
+            
+            # Simple approach: Find the Hero section first, then find the specific button within it
+            hero_clicked = False
+            
+            if request.hero == "OOP":
+                logger.info("Looking for OOP button with exact HTML structure from image")
+                
+                # Try to find and click the OOP button
+                oop_selectors = [
+                    "div[data-tst='chrow_oop']",
+                    "div:has-text('OOP')",
+                    "div.gw_btn:has-text('OOP')"
+                ]
+                
+                for selector in oop_selectors:
+                    try:
+                        logger.info(f"Trying OOP selector: {selector}")
+                        element = await page.wait_for_selector(selector, state="visible", timeout=5000)
+                        if element:
+                            await element.click()
+                            logger.info(f"Successfully clicked on OOP button using selector: {selector}")
+                            await page.wait_for_timeout(1000)
+                            hero_clicked = True
+                            break
+                    except Exception as e:
+                        logger.info(f"OOP selector {selector} failed: {str(e)}")
+                        continue
+            
+            elif request.hero == "IP":
+                logger.info("Looking for IP button")
+                ip_selectors = [
+                    "div[data-tst='chrow_ip']",
+                    "div:has-text('IP')",
+                    "div.gw_btn:has-text('IP')"
+                ]
+                
+                for selector in ip_selectors:
+                    try:
+                        logger.info(f"Trying IP selector: {selector}")
+                        element = await page.wait_for_selector(selector, state="visible", timeout=5000)
+                        if element:
+                            await element.click()
+                            logger.info(f"Successfully clicked on IP button using selector: {selector}")
+                            await page.wait_for_timeout(1000)
+                            hero_clicked = True
+                            break
+                    except Exception as e:
+                        logger.info(f"IP selector {selector} failed: {str(e)}")
+                        continue
+            
+            elif request.hero == "Any":
+                logger.info("Looking for Any button")
+                any_selectors = [
+                    "div:has-text('Any'):not([data-tst])",
+                    "div.gw_btn:has-text('Any')"
+                ]
+                
+                for selector in any_selectors:
+                    try:
+                        logger.info(f"Trying Any selector: {selector}")
+                        element = await page.wait_for_selector(selector, state="visible", timeout=5000)
+                        if element:
+                            await element.click()
+                            logger.info(f"Successfully clicked on Any button using selector: {selector}")
+                            await page.wait_for_timeout(1000)
+                            hero_clicked = True
+                            break
+                    except Exception as e:
+                        logger.info(f"Any selector {selector} failed: {str(e)}")
+                        continue
+                
+                if not hero_clicked:
+                    raise Exception(f"Could not click on hero button for {request.hero}")
+        
         # Build response message and action based on what was performed
         actions_performed = []
         message_parts = ["Successfully clicked on range selector div"]
@@ -442,6 +840,26 @@ async def get_range_action(request: GetRangeRequest):
         if request.cash_stacks and request.cash_stacks.strip():
             actions_performed.append(f"clicked_{request.cash_stacks.lower()}")
             message_parts.append(f"{request.cash_stacks} cash_stacks button")
+        
+        if request.bet_sizes and request.bet_sizes.strip():
+            actions_performed.append(f"clicked_{request.bet_sizes.lower()}")
+            message_parts.append(f"{request.bet_sizes} bet_sizes button")
+        
+        if request.rake and request.rake.strip():
+            actions_performed.append(f"clicked_{request.rake.lower().replace(' ', '_').replace('k', 'k')}")
+            message_parts.append(f"{request.rake} rake button")
+        
+        if request.cash_open_size and request.cash_open_size.strip():
+            actions_performed.append(f"clicked_{request.cash_open_size.lower().replace('.', '_')}")
+            message_parts.append(f"{request.cash_open_size} cash_open_size button")
+        
+        if request.cash_3bet_size and request.cash_3bet_size.strip():
+            actions_performed.append(f"clicked_{request.cash_3bet_size.lower()}")
+            message_parts.append(f"{request.cash_3bet_size} cash_3bet_size button")
+        
+        if request.hero and request.hero.strip():
+            actions_performed.append(f"clicked_{request.hero.lower()}")
+            message_parts.append(f"{request.hero} hero button")
         
         action_performed = "_and_".join(actions_performed) if actions_performed else "clicked_range_selector"
         message = " and ".join(message_parts)
