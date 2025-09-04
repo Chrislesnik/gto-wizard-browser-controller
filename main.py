@@ -39,6 +39,7 @@ class GetRangeRequest(BaseModel):
     hero: Optional[str] = None  # Can be: "Any", "OOP", "IP" or None
     close_dialog: Optional[bool] = None  # Can be: True to close dialog, False or None to skip
     start_building: Optional[bool] = None  # Can be: True to click START BUILDING button, False or None to skip
+    confirm: Optional[bool] = None  # Can be: True to click Confirm button, False or None to skip
 
 class GetRangeResponse(BaseModel):
     session_id: str
@@ -903,6 +904,54 @@ async def get_range_action(request: GetRangeRequest):
             except Exception as e:
                 logger.warning(f"Error clicking START BUILDING button: {str(e)}")
         
+        # Handle Confirm button clicking if requested - this runs independently of other actions
+        if request.confirm:
+            logger.info("Clicking Confirm button as requested")
+            try:
+                # Try to find and click the Confirm button using exact HTML from image
+                confirm_selectors = [
+                    "div.gw_btn.gw_btn_primary.text-normal.weight_500",
+                    "div[class*='gw_btn'][class*='gw_btn_primary'][class*='text-normal'][class*='weight_500']",
+                    "div:has-text('Confirm')",
+                    "div.gw_btn_primary:has-text('Confirm')",
+                    "button:has-text('Confirm')",
+                    "[class*='gw_btn_primary']:has-text('Confirm')"
+                ]
+                
+                confirm_clicked = False
+                for selector in confirm_selectors:
+                    try:
+                        logger.info(f"Trying Confirm selector: {selector}")
+                        element = await page.wait_for_selector(selector, state="visible", timeout=3000)
+                        if element:
+                            await element.click()
+                            logger.info(f"Successfully clicked Confirm button using selector: {selector}")
+                            await page.wait_for_timeout(1000)
+                            confirm_clicked = True
+                            break
+                    except Exception as e:
+                        logger.info(f"Confirm selector {selector} failed: {str(e)}")
+                        continue
+                
+                if not confirm_clicked:
+                    logger.warning("Could not find or click Confirm button")
+                    # Debug: Log what buttons are actually available on the page
+                    try:
+                        all_buttons = await page.query_selector_all("div[class*='btn'], button")
+                        logger.info(f"Found {len(all_buttons)} buttons on the page")
+                        for i, btn in enumerate(all_buttons[:5]):  # Log first 5 buttons
+                            try:
+                                text = await btn.text_content()
+                                classes = await btn.get_attribute("class")
+                                logger.info(f"Button {i+1}: text='{text}', classes='{classes}'")
+                            except:
+                                pass
+                    except Exception as debug_e:
+                        logger.info(f"Debug info failed: {str(debug_e)}")
+                    
+            except Exception as e:
+                logger.warning(f"Error clicking Confirm button: {str(e)}")
+        
         # Build response message and action based on what was performed
         actions_performed = []
         message_parts = ["Successfully clicked on range selector div"]
@@ -954,6 +1003,10 @@ async def get_range_action(request: GetRangeRequest):
         if request.start_building:
             actions_performed.append("clicked_start_building")
             message_parts.append("START BUILDING button")
+        
+        if request.confirm:
+            actions_performed.append("clicked_confirm")
+            message_parts.append("Confirm button")
         
         action_performed = "_and_".join(actions_performed) if actions_performed else "clicked_range_selector"
         message = " and ".join(message_parts)
