@@ -37,6 +37,8 @@ class GetRangeRequest(BaseModel):
     cash_open_size: Optional[str] = None  # Can be: "Any", "GTO", "2.5x" or None
     cash_3bet_size: Optional[str] = None  # Can be: "Any", "GTO", "Smaller" or None
     hero: Optional[str] = None  # Can be: "Any", "OOP", "IP" or None
+    close_dialog: Optional[bool] = None  # Can be: True to close dialog, False or None to skip
+    start_building: Optional[bool] = None  # Can be: True to click START BUILDING button, False or None to skip
 
 class GetRangeResponse(BaseModel):
     session_id: str
@@ -199,7 +201,7 @@ async def get_range_action(request: GetRangeRequest):
                     continue
             
             if not solutions_clicked:
-                raise Exception(f"Could not click on solutions button for {request.solutions}")
+                logger.warning(f"Could not find or click solutions button for {request.solutions}, skipping this action")
             
             logger.info(f"Successfully clicked on range selector div and {request.solutions} solutions button in session {session_id}")
             
@@ -265,7 +267,7 @@ async def get_range_action(request: GetRangeRequest):
                     continue
             
             if not cash_type_clicked:
-                raise Exception(f"Could not click on cash_type button for {request.cash_type}")
+                logger.warning(f"Could not find or click cash_type button for {request.cash_type}, skipping this action")
         
         # Handle cash_players clicking if provided
         if request.cash_players and request.cash_players.strip():
@@ -320,7 +322,7 @@ async def get_range_action(request: GetRangeRequest):
                     continue
             
             if not cash_players_clicked:
-                raise Exception(f"Could not click on cash_players button for {request.cash_players}")
+                logger.warning(f"Could not find or click cash_players button for {request.cash_players}, skipping this action")
         
         # Handle available_spots clicking if provided
         if request.available_spots and request.available_spots.strip():
@@ -374,7 +376,7 @@ async def get_range_action(request: GetRangeRequest):
                     continue
             
             if not available_spots_clicked:
-                raise Exception(f"Could not click on available_spots button for {request.available_spots}")
+                logger.warning(f"Could not find or click available_spots button for {request.available_spots}, skipping this action")
         
         # Handle cash_stacks clicking if provided
         if request.cash_stacks and request.cash_stacks.strip():
@@ -433,7 +435,7 @@ async def get_range_action(request: GetRangeRequest):
                     continue
             
             if not cash_stacks_clicked:
-                raise Exception(f"Could not click on cash_stacks button for {request.cash_stacks}")
+                logger.warning(f"Could not find or click cash_stacks button for {request.cash_stacks}, skipping this action")
         
         # Handle bet_sizes clicking if provided
         if request.bet_sizes and request.bet_sizes.strip():
@@ -488,7 +490,7 @@ async def get_range_action(request: GetRangeRequest):
                     continue
             
             if not bet_sizes_clicked:
-                raise Exception(f"Could not click on bet_sizes button for {request.bet_sizes}")
+                logger.warning(f"Could not find or click bet_sizes button for {request.bet_sizes}, skipping this action")
         
         # Handle rake clicking if provided
         if request.rake and request.rake.strip():
@@ -544,7 +546,7 @@ async def get_range_action(request: GetRangeRequest):
                     continue
             
             if not rake_clicked:
-                raise Exception(f"Could not click on rake button for {request.rake}")
+                logger.warning(f"Could not find or click rake button for {request.rake}, skipping this action")
         
         # Handle cash_open_size clicking if provided
         if request.cash_open_size and request.cash_open_size.strip():
@@ -612,7 +614,7 @@ async def get_range_action(request: GetRangeRequest):
                     continue
             
             if not cash_open_size_clicked:
-                raise Exception(f"Could not click on cash_open_size button for {request.cash_open_size}")
+                logger.warning(f"Could not find or click cash_open_size button for {request.cash_open_size}, skipping this action")
         
         # Handle cash_3bet_size clicking if provided
         if request.cash_3bet_size and request.cash_3bet_size.strip():
@@ -726,7 +728,7 @@ async def get_range_action(request: GetRangeRequest):
                     continue
             
             if not cash_3bet_size_clicked:
-                raise Exception(f"Could not click on cash_3bet_size button for {request.cash_3bet_size}")
+                logger.warning(f"Could not find or click cash_3bet_size button for {request.cash_3bet_size}, skipping this action")
         
         # Handle hero clicking if provided
         if request.hero and request.hero.strip():
@@ -813,9 +815,93 @@ async def get_range_action(request: GetRangeRequest):
                     except Exception as e:
                         logger.info(f"Any selector {selector} failed: {str(e)}")
                         continue
+            
+            if not hero_clicked:
+                logger.warning(f"Could not find or click hero button for {request.hero}, skipping this action")
+        
+        # Handle dialog closing if requested - this runs independently of other actions
+        if request.close_dialog:
+            logger.info("Closing dialog as requested")
+            try:
+                # Try to find and click the dialog close button using exact HTML from image
+                dialog_close_selectors = [
+                    "div[data-tst='dialog_solutions-dialog_close']",
+                    "div.dialog_content_close.mdi.icon_btn.mdi-close",
+                    "div.mdi-close",
+                    "div[class*='dialog_content_close']"
+                ]
                 
-                if not hero_clicked:
-                    raise Exception(f"Could not click on hero button for {request.hero}")
+                dialog_closed = False
+                for selector in dialog_close_selectors:
+                    try:
+                        logger.info(f"Trying dialog close selector: {selector}")
+                        element = await page.wait_for_selector(selector, state="visible", timeout=3000)
+                        if element:
+                            await element.click()
+                            logger.info(f"Successfully closed dialog using selector: {selector}")
+                            await page.wait_for_timeout(3000)  # Wait longer for page to update
+                            dialog_closed = True
+                            break
+                    except Exception as e:
+                        logger.info(f"Dialog close selector {selector} failed: {str(e)}")
+                        continue
+                
+                if not dialog_closed:
+                    logger.warning("Could not find or click dialog close button")
+                    
+            except Exception as e:
+                logger.warning(f"Error closing dialog: {str(e)}")
+        
+        # Handle START BUILDING button clicking if requested - this runs independently of other actions
+        if request.start_building:
+            logger.info("Clicking START BUILDING button as requested")
+            try:
+                # Try to find and click the START BUILDING button using exact HTML from image
+                start_building_selectors = [
+                    "div.gw_btn_primary.gw_btn.-v1",
+                    "div[class*='gw_btn_primary'][class*='gw_btn'][class*='-v1']",
+                    "div:has-text('Start building')",
+                    "div:has-text('START BUILDING')",
+                    "div.gw_btn_primary:has-text('Start building')",
+                    "button:has-text('Start building')",
+                    "button:has-text('START BUILDING')",
+                    "[class*='gw_btn_primary']:has-text('Start building')",
+                    "[class*='gw_btn_primary']:has-text('START BUILDING')"
+                ]
+                
+                start_building_clicked = False
+                for selector in start_building_selectors:
+                    try:
+                        logger.info(f"Trying START BUILDING selector: {selector}")
+                        element = await page.wait_for_selector(selector, state="visible", timeout=3000)
+                        if element:
+                            await element.click()
+                            logger.info(f"Successfully clicked START BUILDING button using selector: {selector}")
+                            await page.wait_for_timeout(1000)
+                            start_building_clicked = True
+                            break
+                    except Exception as e:
+                        logger.info(f"START BUILDING selector {selector} failed: {str(e)}")
+                        continue
+                
+                if not start_building_clicked:
+                    logger.warning("Could not find or click START BUILDING button")
+                    # Debug: Log what buttons are actually available on the page
+                    try:
+                        all_buttons = await page.query_selector_all("div[class*='btn'], button")
+                        logger.info(f"Found {len(all_buttons)} buttons on the page")
+                        for i, btn in enumerate(all_buttons[:5]):  # Log first 5 buttons
+                            try:
+                                text = await btn.text_content()
+                                classes = await btn.get_attribute("class")
+                                logger.info(f"Button {i+1}: text='{text}', classes='{classes}'")
+                            except:
+                                pass
+                    except Exception as debug_e:
+                        logger.info(f"Debug info failed: {str(debug_e)}")
+                    
+            except Exception as e:
+                logger.warning(f"Error clicking START BUILDING button: {str(e)}")
         
         # Build response message and action based on what was performed
         actions_performed = []
@@ -860,6 +946,14 @@ async def get_range_action(request: GetRangeRequest):
         if request.hero and request.hero.strip():
             actions_performed.append(f"clicked_{request.hero.lower()}")
             message_parts.append(f"{request.hero} hero button")
+        
+        if request.close_dialog:
+            actions_performed.append("closed_dialog")
+            message_parts.append("dialog close button")
+        
+        if request.start_building:
+            actions_performed.append("clicked_start_building")
+            message_parts.append("START BUILDING button")
         
         action_performed = "_and_".join(actions_performed) if actions_performed else "clicked_range_selector"
         message = " and ".join(message_parts)
